@@ -1,0 +1,132 @@
+function CleanUp-SystemDisk {
+<# 
+.CREATED BY: 
+    Bart Tacken 
+.VERSION: 
+	Date		Version	Remarks
+	01\10\2014	1.2		tested version	
+.Synopsis 
+   	Automate cleaning up a System C:\ drive with low disk space 
+.DESCRIPTION 
+   	Cleans the C: drive's:
+   	#1# Window Temperary files in local user profiles
+   	#2# Temporary folder in local user profiles
+   	#3# Custom Temp directory
+   	#4# Windows Temp directory
+   	#5# Windows Crash dump files
+   	#6# Contents of Recycle Bin for each user profile
+   	#7# Cleans IIS Logs (If applicable)
+      ` 
+   	By default this script leaves files that are newer than 2 days old however this variable can be edited. 
+.EXAMPLE 
+   	PS C:\>.\cleanup_log.ps1 
+   	Save the file to your desktop with a .PS1 extention and run the file from an elavated PowerShell prompt. 
+.NOTES 
+    Script    	
+.FUNCTIONALITY 
+   	PowerShell v2 
+#> 
+
+## Set Variables
+$Date = Get-Date
+$LogPath = 'C:\Windows\Temp' 				#Path for storing logfile with transcript of deleted files
+$DaysToKeepData = 2 						#Number of days to Keep data starting from today (0 = Delete All)
+$UsersDir = 'C:\Users'						#User profile directory
+$WinTemp = "c:\Windows\Temp\*"				#Windows Temp directory
+$TempDir4 = "C:\Temp"						#Manual Temp directory
+#$LogDate = get-date -format "MM-d-yy-HH"
+#$DeletedItems = "$LogPath\DeletedItems$LogDate.txt"
+#$FullPath = "$Logpath\$LogDate.txt"
+#$2Enter = "`r`n`r`n"
+$1Enter = "`r`n"
+
+##Logging For testing purposes:
+#start-transcript -Path $FullPath
+
+## Show drive usage before running 
+$Before = Get-WmiObject Win32_LogicalDisk | Where-Object { $_.DriveType -eq "3" } | Select-Object SystemName,
+          @{ Name = "Drive" ; Expression = { ( $_.DeviceID ) } },
+          @{ Name = "Size (GB)" ; Expression = {"{0:N1}" -f( $_.Size / 1gb)}},
+          @{ Name = "FreeSpace (GB)" ; Expression = {"{0:N1}" -f( $_.Freespace / 1gb ) } },
+          @{ Name = "PercentFree" ; Expression = {"{0:P1}" -f( $_.FreeSpace / $_.Size ) } } |
+             Format-Table -AutoSize | Out-String
+
+## Get inital free disk space size
+$disk = Get-WmiObject Win32_LogicalDisk | Where-Object { $_.DriveType -eq "3" } | Select-Object Size,FreeSpace
+$FreeSpaceBeforeUnFormatted = ($disk.FreeSpace / 1GB)
+
+#1# Remove Temporary Internet Files in local user profiles
+	write-Host "Removing Temporary Internet Files in each local profile:" -ForegroundColor Green 
+	$UsersDirSubCollection = get-childitem $UsersDir -Name
+	forEach ($_name in $UsersDirSubCollection) {
+		Get-ChildItem "C:\users\$_name\AppData\Local\Microsoft\Windows\Temporary Internet Files\*" -Recurse -Force -Verbose -ErrorAction SilentlyContinue |
+		Where-Object { ($_.CreationTime -lt $(Get-Date).AddDays(-$DaysToKeepData))} | 
+		remove-item -force -recurse -Verbose -ErrorAction SilentlyContinue }
+$1Enter
+#2# Remove all files and folders in user's Temp folder.
+	write-Host "Removing Temp folder in each local profile:" -ForegroundColor Green 
+	$UsersDirSubCollection = get-childitem $UsersDir -Name
+	forEach ($_name in $UsersDirSubCollection) {
+		Get-ChildItem "C:\users\$_name\AppData\Local\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue |
+		Where-Object { ($_.CreationTime -lt $(Get-Date).AddDays(-$DaysToKeepData))} | 
+		remove-item -force -Verbose -recurse -ErrorAction SilentlyContinue }
+$1Enter
+#3# Remove Temp Directory  
+ write-Host "Removing Junk files in $TempDir4:" -ForegroundColor Green
+	Get-ChildItem $TempDir4 -Recurse -Force -Verbose -ErrorAction SilentlyContinue | 
+    Where-Object { ($_.CreationTime -lt $(Get-Date).AddDays(-$DaysToKeepData))} |
+	Remove-Item -Force -Verbose -recurse -ErrorAction SilentlyContinue
+$1Enter	
+#4# Remove Windows Temp Directory  
+    write-Host "Removing Junk files in C:\Windows\Temp\*:" -ForegroundColor Green
+	Get-ChildItem $WinTemp -Recurse -Force -Verbose -ErrorAction SilentlyContinue | 
+    Where-Object { ($_.CreationTime -lt $(Get-Date).AddDays(-$DaysToKeepData))} |
+	Remove-Item -Force -Verbose -recurse -ErrorAction SilentlyContinue
+$1Enter
+#5# clear Windows crash dump files
+	write-Host "Removing DMP files in C:\Windows:" -ForegroundColor Green 
+	Get-ChildItem $Windir -Filter *.dmp -Recurse -Force -Verbose -ErrorAction SilentlyContinue | 
+	Where-Object { ($_.CreationTime -lt $(Get-Date).AddDays(-$DaysToKeepData))} |
+	Remove-Item -Force -Verbose -Recurse -ErrorAction SilentlyContinue
+$1Enter
+#6# deletes the contents of the recycling Bin.
+	write-Host "Removing contents of recycling Bin:" -ForegroundColor Green 
+	ForEach ($Drive in Get-PSDrive -PSProvider FileSystem) {
+	    $Path = $Drive.Name + ':\$Recycle.Bin'
+	    Get-ChildItem $Path -Force -Recurse -ErrorAction SilentlyContinue |
+	    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$DaysToKeepData) } |
+	    Remove-Item -Force -Verbose -Recurse -ErrorAction SilentlyContinue }
+$1Enter		
+#7# Cleans IIS Logs if applicable.
+	write-Host "Removing IIS logs." -ForegroundColor Green 
+	Get-ChildItem "C:\inetpub\logs\LogFiles\*" -Recurse -Force -ErrorAction SilentlyContinue | 
+	Where-Object { ($_.CreationTime -le $(Get-Date).AddDays(-$DaysToKeepData)) } | 
+	Remove-Item -Force -Verbose -Recurse -ErrorAction SilentlyContinue 
+$1Enter
+## Show drive usage after running cleanup script 
+$After =  Get-WmiObject Win32_LogicalDisk | Where-Object { $_.DriveType -eq "3" } | Select-Object SystemName,
+        @{ Name = "Drive" ; Expression = { ( $_.DeviceID ) } },
+        @{ Name = "Size (GB)" ; Expression = {"{0:N1}" -f( $_.Size / 1gb)}},
+        @{ Name = "FreeSpace (GB)" ; Expression = {"{0:N1}" -f( $_.Freespace / 1gb ) } },
+        @{ Name = "PercentFree" ; Expression = {"{0:P1}" -f( $_.FreeSpace / $_.Size ) } } |
+            Format-Table -AutoSize | Out-String
+
+## Get Free disk space size
+$disk = Get-WmiObject Win32_LogicalDisk | Where-Object { $_.DriveType -eq "3" } | Select-Object Size,FreeSpace
+$FreeSpaceAfterUnFormatted = ($disk.FreeSpace / 1GB)
+
+## Calculate cleaned diskspace
+[String]$a = [string]$FreeSpaceAfterUnFormatted - [string]$FreeSpaceBeforeUnFormatted
+
+## Rounds to two decimal places.
+$aRounded = [System.Math]::Round($a, 2)
+
+## Sends some before and after info for ticketing purposes 
+Write-Host "Before Cleaning: $Before"
+Write-Host "After Cleaning: $After"
+Write-Host "CleanUp script has cleaned $aRounded GB"
+#$1Enter
+Write-Host  $Date
+#Stop-Transcript
+}
+CleanUp-SystemDisk
